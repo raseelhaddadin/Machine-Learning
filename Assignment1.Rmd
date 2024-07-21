@@ -1,0 +1,359 @@
+---
+title: "Assignment 1"
+subtitle: "Machine Learning (ITAO 40420)"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: lumen
+    highlight: zenburn
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+Running the appropriate library
+```{r}
+library(tidyverse)
+```
+
+### PART I: Collect and Describe the Data
+
+
+Using read_csv to import the data
+```{r}
+inspections <- read_csv("https://s3.amazonaws.com/notredame.analytics.data/inspections.csv")
+```
+I want to inspect my data to understand my variables: what they're called and their data types. 
+```{r}
+inspections %>%
+  glimpse()
+```
+
+
+#### Question 1.  
+
+
+Assigning variable names using rename() 
+```{r}
+inspections <- inspections %>%
+  rename(ID = `Inspection ID`) %>%
+  rename(DBAName = `DBA Name`) %>%
+  rename(AKAName = `AKA Name`) %>%
+  rename(License = `License #`) %>%
+  rename(FacilityType = `Facility Type`) %>%
+  rename(Risk = Risk) %>%
+  rename(Address = Address) %>%
+  rename(City = City) %>%
+  rename(State = State) %>%
+  rename(ZIP = Zip) %>%
+  rename(InspectionDate = `Inspection Date`) %>%
+  rename(InspectionType = `Inspection Type`) %>%
+  rename(Results = Results) %>%
+  rename(Violations = Violations) %>%
+  rename(Latitude = Latitude) %>%
+  rename(Longitude = Longitude) %>%
+  rename(Location = Location)
+```
+
+
+Checking to see if the renaming worked - it did
+```{r}
+inspections %>%
+  glimpse()
+```
+
+
+Assigning the datatypes to the variables using the mutate() and as. functions. 
+For this question, I used chatgpt to help me fix an error. When I first ran my code, I got an error for as.Date. Chatgpt gave me the format part to add which helped me fix my error.
+```{r}
+inspections <- inspections %>%
+  mutate( ID = as.integer(ID), 
+          DBAName = as.character(DBAName), 
+          AKAName = as.character(AKAName), 
+          License = as.character(License), 
+          FacilityType = as.factor(FacilityType),
+          Risk = as.factor(Risk), 
+          Address = as.character(Address), 
+          City = as.factor(City), 
+          State = as.factor(State),
+          ZIP = as.factor(ZIP), 
+          InspectionDate = as.Date(InspectionDate,format = "%m/%d/%Y"),
+          InspectionType = as.factor(InspectionType),
+          Results = as.factor(Results), 
+          Violations = as.character(Violations), 
+          Latitude = as.double(Latitude), 
+          Longitude = as.double(Longitude), 
+          Location = as.character(Location)
+  )
+```
+ 
+
+Checking to see if the datatypes changed - they did
+```{r}
+inspections %>%
+  glimpse()
+```
+
+
+#### Question 2.  
+
+
+Using select() and summary() to show summary stats for specific features
+```{r}
+inspections %>%
+  select( City, State, ZIP, InspectionDate, Longitude, Latitude) %>%
+  summary()
+```
+
+
+### PART II: Resolve Data Quality Issues
+
+I was unsure of what command to use, so I asked chatgpt for the best command and it said replace(). I used the help (?) to understand the syntax of the replace command.
+```{r}
+#syntax(what im changing, value I want to change, what im changing it to)
+?replace
+```
+
+
+#### Question 1. 
+
+
+Using replace() to change the zip code value to the correct one. 
+```{r}
+inspections <- inspections %>% 
+  mutate(ZIP = as.character(ZIP)) %>% #changing to character to be able to use replace()
+  mutate(ZIP = replace(ZIP, ZIP == 60627, 60827)) %>% 
+  mutate(ZIP = as.factor(ZIP)) #changing zip back to factor
+```
+
+
+#### Question 2.  
+
+
+Using replace to change the city name as well as change the zip code
+```{r}
+inspections <- inspections %>% 
+  mutate(City = as.character(City)) %>% #changing to character to be able to use replace()
+  mutate(City = replace(City, DBAName == "STEVES 77 ICE CREAM" , "Bridgeview")) %>% 
+  mutate(City = as.factor(City)) %>% 
+  mutate(ZIP = as.character(ZIP)) %>% #changing to character to be able to use replace()
+  mutate(ZIP = replace(ZIP, DBAName == "STEVES 77 ICE CREAM" , 60455)) %>% 
+  mutate(ZIP = as.factor(ZIP))
+  
+inspections %>% 
+  filter(DBAName == "STEVES 77 ICE CREAM") #checking to see if it worked
+```
+
+
+#### Question 3
+
+trying to find the NA values in the dataset
+```{r}
+inspections %>% 
+  filter(is.na(ZIP))  
+```
+Changing Chartwells zipcode first
+
+
+I am using filter() and str_detect to figure out the zip codes of stores on the same street as Chartwells
+
+
+```{r}
+inspections %>% 
+  filter(str_detect(Address, "N FREMONT")) #60642
+```
+
+
+The zipcode for stores on that street is 60642. Using replace again to change the zipcode for Chartwells
+```{r}
+inspections <- inspections %>% 
+  mutate(ZIP = as.character(ZIP)) %>% 
+  mutate(ZIP = replace(ZIP, Address == "2324 N FREMONT ST", 60642)) %>% #using address so I only change this Chartwells zip code, not all Chartwells in the dataset 
+  mutate(ZIP = as.factor(ZIP)) 
+```
+
+
+running is.na to see if Chartwells is no longer there - it is not
+```{r}
+inspections %>% 
+  filter(is.na(ZIP)) 
+```
+
+
+Checking the data for Chartwells - Zip has been changed
+```{r}
+inspections %>% 
+  filter(str_detect(Address, "2324 N FREMONT ST"))
+```
+
+
+Changing dunkin' donuts next using the same steps
+```{r}
+inspections %>% 
+  filter(str_detect(Address, "N PAULINA")) #60626 
+```
+
+
+The streets with the closests addresses had a zip code of 60626. 
+```{r}
+inspections <- inspections %>% 
+  mutate(ZIP = as.character(ZIP)) %>% 
+  mutate(ZIP = replace(ZIP, Address == "7545 N PAULINA ST", 60626)) %>% 
+  mutate(ZIP = as.factor(ZIP)) 
+
+```
+
+Checking to see if the ZIP code changed - it did
+```{r}
+inspections %>% 
+  filter(str_detect(Address, "7545 N PAULINA ST")) 
+```
+
+
+#### Question 4
+
+
+Importing the data
+```{r}
+zip_data <- read_csv("https://s3.amazonaws.com/notredame.analytics.data/zipcode.csv")
+```
+
+
+Using glimpse() - data was imported properly 
+```{r}
+glimpse(zip_data)
+```
+
+
+#### Question 5
+
+
+I want to join the datasets using the zip column. Renaming the column in the zip_data dataset to make the join process easier
+```{r}
+colnames(zip_data)[colnames(zip_data) == "zip"] <- "ZIP"
+glimpse(zip_data)
+```
+
+Using a left join so I can keep all of inspections data and only adding matching data from the zip_data. I also renamed the dataset merged_data instead of inspections. 
+
+
+I was able to figure out the left join part alone. However, I could not figure out how to get rid of the NA values or the duplicate columns, so I asked chatgpt for help with the merged_data section, as nothing I tried by myself was working, I was only getting errors.  
+```{r}
+# Left join on ZIP code columns
+merged_data <- left_join(inspections, zip_data, by = "ZIP")
+
+# Replace missing values in 'City', 'State', 'Latitude', and 'Longitude' with values from 'zip_data'
+merged_data <- merged_data %>%
+  mutate(
+    City = coalesce(City, city),
+    State = coalesce(State, state),
+    Latitude = coalesce(Latitude, latitude),
+    Longitude = coalesce(Longitude, longitude)
+  ) %>%
+  select(-city, -state, -latitude, -longitude)  # Remove redundant columns
+
+# Drop rows with NA values
+merged_data <- na.omit(merged_data)
+
+glimpse(merged_data)
+
+
+```
+
+
+Using colSums and is.na to check if all the na values are gone - they are. 
+```{r}
+colSums(is.na(merged_data))
+```
+
+
+#### Question 6:
+
+
+Using glimpse to check the data type of my variables
+```{r}
+glimpse(merged_data) #City, State and ZIP are characters
+```
+
+
+Converting City, State and ZIP to factors and renaming the data set inspections
+```{r}
+inspections <- merged_data %>% 
+  mutate(ZIP = as.factor(ZIP)) %>%
+  mutate(City = as.factor(City)) %>%
+  mutate(State = as.factor(State))
+glimpse(inspections)
+```
+
+
+Using select() and summary() to get summary stats for specific columns. 
+```{r}
+inspections %>%
+  select( City, State, ZIP, Longitude, Latitude) %>%
+  summary()
+```
+
+### Part III: Visualize and Interpret the Data
+
+
+Loading stringr
+```{r}
+library(stringr)
+```
+
+
+#### Question 1
+```{r}
+?ifelse
+```
+
+
+Using str_count to figure out how many pipe characters we have 
+```{r}
+inspections <- inspections %>%
+  mutate(ViolationCount = str_count(Violations, "\\|") + 1) %>%
+  mutate(ViolationCount = ifelse(is.na(Violations), 0, ViolationCount)) 
+
+glimpse(inspections)
+```
+
+
+#### Question 2
+
+
+Using a boxplot to be able to compare discrete values against continuous values.
+```{r}
+#load ggplot
+library(ggplot2)
+```
+
+
+
+```{r}
+inspections <- inspections %>%
+  filter(Results %in% c("Fail", "Pass", "Pass w/ Conditions"))
+inspections
+```
+
+
+```{r}
+inspections %>%
+  ggplot(mapping = aes(x=Results, y = ViolationCount, fill = Results)) +
+  geom_boxplot() +
+  labs(title = "Relationship between Inspection Results and Number of Violations",
+       x = "Results",
+       y = "Number of Violations") +
+  theme_minimal()
+```
+
+
+
+#### Question 3
+When a company passes, their median is lower, compared to companies who pass w/ conditions or companies that fail. However, the median result for pass w/ conditions is lower than failing. All the values have outliers. Addtionally, pass has the lowest IQR range meaning it has the least variability. Meanwhile Fail has the highest IQR range meaning it has the highest variability. Pass w/ conditions has the highest value for number of violations at around 25 violations. 
+
+
+
+

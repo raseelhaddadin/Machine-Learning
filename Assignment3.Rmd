@@ -1,0 +1,353 @@
+---
+title: "Assignment 3"
+subtitle: "Machine Learning (ITAO 40420)"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: lumen
+    highlight: zenburn
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+#### Loading Tidyverse
+```{r}
+library(tidyverse)
+```
+
+
+### PART I: Collect, Explore, and Prepare the Data
+
+
+#### Question 1
+```{r}
+loans <- read_csv("https://s3.amazonaws.com/notredame.analytics.data/lendingclub.csv")
+glimpse(loans)
+```
+
+
+#### Question 2
+```{r}
+loans <- loans %>% 
+  mutate(Grade = as.factor(Grade),
+         EmploymentLength = as.factor(EmploymentLength),
+         HomeOwnership = as.factor(HomeOwnership),
+         IncomeVerified = as.factor(IncomeVerified),
+         LoanPurpose = as.factor(LoanPurpose),
+         Default = as.factor(Default))
+
+glimpse(loans) #conversion worked
+```
+
+
+#### Question 3
+```{r}
+#using summary to get summary stats
+summary(loans)
+```
+
+
+#### Question 4 
+```{r}
+#we are predicting default so it is our stratum
+library(caret)
+RNGkind(sample.kind = "Rounding")
+set.seed(1234)
+loans_set <- createDataPartition(y = loans$Default, p = 0.75, list = FALSE) #75% training
+loans_train <- loans[loans_set,]
+loans_test <- loans[-loans_set,]
+```
+
+
+#### Question 5
+First we test for imbalance. We do have an imbalance (85/15)
+```{r}
+loans_train %>% 
+  count(Default) %>% 
+  mutate(prop = round(n / sum(n), 4)) %>% 
+  arrange(desc(n))
+```
+
+
+Next we fix the imbalance using smote()
+```{r} 
+library(performanceEstimation)
+RNGkind(sample.kind = "Rounding")
+set.seed(1234)
+loans_train <- smote(Default ~ ., loans_train, perc.over = 1, perc.under = 2) #we will get 50/50 w/ under = 1 and over =2
+loans_train %>% count(Default) %>% mutate(prop = round(n / sum(n), 4)) %>% arrange(desc(n))
+```
+
+
+#### Question 6
+First convert loans_train
+```{r}
+loans_train <- loans_train %>% 
+  mutate(Delinquencies = as.integer(Delinquencies),
+         Inquiries = as.integer(Inquiries), 
+         OpenAccounts = as.integer(OpenAccounts),
+         TotalAccounts = as.integer(TotalAccounts),
+         PublicRecords = as.integer(PublicRecords)) 
+
+glimpse(loans_train) #conversion worked
+```
+
+Next I'm converting loans_test
+```{r}
+loans_test <- loans_test %>% 
+  mutate(Delinquencies = as.integer(Delinquencies),
+         Inquiries = as.integer(Inquiries), 
+         OpenAccounts = as.integer(OpenAccounts),
+         TotalAccounts = as.integer(TotalAccounts),
+         PublicRecords = as.integer(PublicRecords))
+
+glimpse(loans_test) #conversion worked
+```
+
+
+### PART II: Train the Models
+
+
+#### Question 1
+Use rpart for CART decision tree
+using model lookup to learn about rpart - parameter, label etc... 
+```{r}
+modelLookup("rpart")
+```
+
+
+```{r}
+# got cp from modelLookup
+tree_grid<- expand.grid(cp = seq(from = 0.0001, to =  0.001, by = 0.0001))
+tree_grid
+```
+
+The final value used for the model was cp = 5e-04. This is the optimal CP.
+```{r}
+set.seed(1234)
+tree_mod <-  train(
+  Default ~.,
+  data = loans_train, #using train for our data!
+  method = 'rpart', 
+  metric = "Kappa",
+  trControl = trainControl(method = "cv", number = 3),
+  tuneGrid = tree_grid
+)
+tree_mod 
+```
+
+
+#### Question 2
+
+```{r}
+modelLookup("rf")
+```
+
+
+```{r}
+# get the parameters name from modelLookup
+rf_grid <- expand.grid(mtry = c(10,12,14)) #only 3 values to use c()
+```
+
+
+The final value used for the model was mtry = 10.
+```{r}
+library(randomForest) #run appropriate library
+set.seed(1234)
+rf_mod <-
+  train(
+    Default ~ .,
+    data = loans_train,
+    method = "rf", #specifying random forest as the method
+    metric = "Kappa", #kappa as our metric
+    trControl = trainControl(method = "cv", number = 3), # 3 fold CV
+    tuneGrid = rf_grid
+  )
+rf_mod
+```
+
+
+#### Question 3
+```{r}
+modelLookup("xgbTree")
+```
+
+
+```{r}
+xgb_grid <- expand.grid(
+  max_depth = 6, #Maximum Tree Depth
+  gamma = 0.01, # Minimum Loss Reduction
+  min_child_weight = 1, #Minimum Sum of Instance Weights
+  nrounds = 100, #Number of Boosting Iterations
+  eta = seq(from = 0.1, to = 0.5, by = 0.05), #Shrinkage (Learning Rate)
+  subsample = 1, #Subsample Percentage
+  colsample_bytree = 1 #Subsample Ratio of Columns
+)
+```
+
+
+The final values used for the model were nrounds = 100, max_depth = 3, eta = 0.5, gamma =
+ 0.01, colsample_bytree = 1, min_child_weight = 1 and subsample = 1.
+```{r}
+library(xgboost)
+set.seed(1234)
+xgb_mod <-
+  train(
+    Default ~ .,
+    data = loans_train,
+    method = "xgbTree", #method for XGBoost
+    metric = "Kappa", #kappa as our metric
+    trControl = trainControl(method = "cv", number = 3), # 3 fold CV
+    tuneGrid = xgb_grid
+  )
+xgb_mod
+```
+
+
+### PART III: Compare the Models
+
+
+#### Question 1
+
+
+Creating the function
+```{r}
+get_num_metrics <- function(model, data, labels, value, method){
+  library(AUC)
+  library(broom)
+  
+  curve <- predict(model, data, type = "prob") %>%
+    pull(value) %>%
+    roc(pull(data, labels))
+  
+  metric <- predict(model, data) %>%
+    confusionMatrix(pull(data, labels), positive = value) %>%
+    tidy() %>%
+    filter(term %in% c('accuracy','kappa','sensitivity','specificity','precision','recall','f1')) %>%
+    select(term, estimate) %>%
+    pivot_wider(names_from = term, values_from = estimate) %>%
+    mutate(approach = method) %>%
+    mutate(auc = auc(curve)) %>%
+    select(approach, everything())
+  
+  return (metric)
+}
+```
+
+
+Decision Tree numeric metric
+```{r}
+#now we use test data
+#yes indicates the loan was defaulted
+p1 <- get_num_metrics(tree_mod, loans_test, "Default", "Yes", "Decision Tree (CART)") 
+p1
+```
+
+
+Random Forest Numeric Metric
+```{r}
+p2 <- get_num_metrics(rf_mod, loans_test, "Default", "Yes", "Random Forest") 
+p2
+```
+
+
+eXtreme Gradient Boosting Numeric Metric
+```{r}
+p3 <- get_num_metrics(xgb_mod, loans_test, "Default", "Yes", "eXtreme Gradient Boosting") 
+p3
+```
+
+
+Using bind_rows to be able to combine all then compare them 
+```{r}
+performance <- bind_rows(p1, p2, p3)
+performance
+```
+
+
+#### Question 2
+Based off of the performance numeric data I would choose eXtreme gradient boosting as it has the highest Accuracy and Specificity. Additionally it has the second highest Precision and Kappa values. However, the random forest does have the highest Kappa values and Sensitivity, therefore it depends on what we are using the models for. In general, I would not consider Decision Tree. 
+
+
+#### Question 3
+
+
+Running the visuals function
+```{r}
+get_viz_metrics <- function(model, data, labels, value, method){
+  library(AUC)
+  library(broom)
+  
+  metric <- predict(model, data, type = "prob") %>%
+    pull(value) %>%
+    roc(pull(data, labels)) %>% 
+    tidy() %>% 
+    mutate(approach = method) %>% 
+    select(approach, everything())
+  
+  return (metric)
+}
+```
+
+
+Decision Tree Visual
+```{r}
+v1 <- get_viz_metrics(tree_mod, loans_test, "Default", "Yes", "Decision Tree (CART)") 
+v1
+```
+
+
+Random Forest Visual
+```{r}
+v2<- get_viz_metrics(rf_mod, loans_test, "Default", "Yes", "Random Forest")
+v2
+```
+
+
+eXtreme Gradient Boosting Visual
+```{r}
+v3<- get_viz_metrics(xgb_mod, loans_test, "Default", "Yes", "eXtreme Gradient Boosting")
+v3
+```
+
+
+Using bind rows again, but this time to create a visual
+```{r}
+visualization <- bind_rows(v1,v2,v3)
+visualization
+```
+
+
+Plotting the ROC Curve
+```{r}
+visualization <- bind_rows(v1, v2, v3)
+visualization %>%
+  ggplot(mapping  = aes(x = fpr, y = tpr, color = approach)) +
+  geom_line(size = 1) +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", size = 1) +
+  xlim(0, 1) +
+  labs(title = "ROC Curve for Defaulting on a loan", 
+       x = "False Positive Rate (1- Specificity)", 
+       y = "True Positive Rate (Sensitivity)") +
+  theme_minimal()
+```
+
+
+#### Question 4
+Based off of the numeric performance and the ROC curve, I would choose random forest. Looking at the ROC curve, random forest has the closest curve to a perfect classifier. Additionally as I said when I was looking at the nuermic performance Random Forest had the highest Kappa and Sensitivity. eXtreme Gradient is a close second, but its curve is further from the perfect classifier compared to Random Forest. However again picking an apporporate curve depends on what I want to use it for, but in general I would pick Random Forest. 
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,240 @@
+---
+title: "Lab 2"
+subtitle: "Machine Learning (ITAO 40420)"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: lumen
+    highlight: zenburn
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+#### Loading packages
+```{r}
+library(tidyverse) 
+```
+
+
+### Part 1: Collect, Explore and Prepare the Data
+
+
+#### Question 1
+```{r}
+loans <- read_csv("https://s3.amazonaws.com/notredame.analytics.data/lendingclub.csv")
+glimpse(loans)
+```
+
+
+#### Question 2
+```{r}
+loans <- loans %>% 
+  mutate(Grade = as.factor(Grade),
+         EmploymentLength = as.factor(EmploymentLength),
+         HomeOwnership = as.factor(HomeOwnership),
+         IncomeVerified = as.factor(IncomeVerified),
+         LoanPurpose = as.factor(LoanPurpose),
+         Default = as.factor(Default))
+
+glimpse(loans) #conversion worked
+```
+
+
+#### Question 3
+```{r}
+summary(loans)
+```
+
+
+#### Question 4
+```{r}
+#we are predicting default so it is our stratum
+library(caret)
+RNGkind(sample.kind = "Rounding")
+set.seed(1234)
+loans_set <- createDataPartition(y = loans$Default, p = 0.75, list = FALSE) #75% training
+loans_train <- loans[loans_set,]
+loans_test <- loans[-loans_set,]
+```
+
+
+#### Question 5
+First we test for imbalance. We do have an imbalance
+```{r}
+loans_train %>% 
+  count(Default) %>% 
+  mutate(prop = round(n / sum(n), 4)) %>% 
+  arrange(desc(n))
+```
+
+
+Next we fix the imbalance using smote()
+```{r}
+library(performanceEstimation)
+RNGkind(sample.kind = "Rounding")
+set.seed(1234)
+loans_train <- smote(Default ~ ., loans_train, perc.over = 1, perc.under = 2) #we will get 50/50 w/ under = 1 and over =2
+loans_train %>% count(Default) %>% mutate(prop = round(n / sum(n), 4)) %>% arrange(desc(n))
+```
+
+
+#### Question 6
+Using glimpse to look at the data types
+```{r}
+ # the three variables are dbl in train and test
+glimpse(loans_train )
+glimpse(loans_test)
+```
+
+
+First convert loans_train
+```{r}
+loans_train <- loans_train %>% 
+  mutate(Delinquencies = as.integer(Delinquencies),
+         Inquiries = as.integer(Inquiries), 
+         OpenAccounts = as.integer(OpenAccounts),
+         TotalAccounts = as.integer(TotalAccounts),
+         PublicRecords = as.integer(PublicRecords)) 
+
+glimpse(loans_train) #conversion worked
+```
+
+
+Converting loans_test
+```{r}
+loans_test <- loans_test %>% 
+  mutate(Delinquencies = as.integer(Delinquencies),
+         Inquiries = as.integer(Inquiries), 
+         OpenAccounts = as.integer(OpenAccounts),
+         TotalAccounts = as.integer(TotalAccounts),
+         PublicRecords = as.integer(PublicRecords))
+
+glimpse(loans_test) #conversion worked
+```
+
+
+### Part II: Train the model
+
+
+#### Question 1
+use rpart for the CART algorithm
+```{r}
+library(rpart)
+loans_mod <-
+  rpart(
+    Default ~ ., #predicting default using all the dependent variables
+    method = "class",
+    data = loans_train,
+    cp = 0.005
+  )
+```
+
+
+#### Question 2
+```{r}
+library(rpart.plot)
+rpart.plot(loans_mod)
+```
+
+
+#### Question 3
+The feature that is most predictive of whether a borrower will default or not default on their loan is the root node, which is interest rate < 11. It is the first thing the decision tree decides to split on. As the topmost node, it represents the initial feature that is used to partition the data into subsets, therefore it is the most predictive in deciding whether a loan will be defaulted or not. The rootnode best separates the data into distinct groups which indicates its high predictive power. 
+
+### Part III: Evaluate the Model
+
+
+#### Question 1
+Now we work with the test data
+```{r}
+#use predict() on test data
+loans_pred <- predict(loans_mod, loans_test, type = "class")
+head(loans_pred,5)
+```
+
+
+#### Question 2
+```{r}
+#use mutate to add the column
+loans_test <- loans_test %>% 
+  mutate(Prediction = loans_pred)
+
+glimpse(loans_test) #it worked. it was added. 
+```
+
+
+#### Question 3
+Low accuracy score
+```{r}
+loans_test %>% 
+  rename(Actual = Default) %>% 
+  summarise(Accuracy = sum(Actual == Prediction) / n())
+```
+
+
+### Part IV: Interpret the results
+
+
+#### Question 1
+They made 6013977 on loans that were issues back and paid in full. 
+```{r}
+paid_back_loans <- loans_test %>% 
+  filter(Default == "No", #NO: borrower paid back the loan in full
+         Prediction == "No") #loan was issued
+
+profit <- paid_back_loans$LoanAmount * 0.12
+
+total_profit <- sum(profit)
+total_profit
+```
+
+
+#### Question 2
+They lose 3256015 on bad loans issued as a result of model recommendation. 
+```{r}
+not_paid_back_loans <- loans_test %>% 
+  filter(Default == "Yes", #Yes: borrower did not paid back the loan in full
+         Prediction == "No") #predicting no to default because the loan was issued
+
+losses <- not_paid_back_loans$LoanAmount * 0.70
+
+total_losses <- sum(losses)
+total_losses
+```
+
+
+#### Question 3
+Servicing cost of 1095358
+```{r}
+#accounting for the loan service cost of 2%
+servicing_costs <- loans_test %>% 
+  filter(Prediction == "No") %>% 
+  summarise(servicing_cost  = sum(LoanAmount * 0.02))
+servicing_costs
+```
+
+They realized a profit of 1662604
+```{r}
+#profit or loss?
+profit_loss <- total_profit - total_losses - servicing_costs
+profit_loss
+```
+
+
+#### Question 4
+They would have made 4876808 from loans that your model suggested were bad but were actually good
+```{r}
+money_made <- loans_test %>% 
+  filter(Default == "No",
+         Prediction == "Yes")  #model suggested were bad but were actually good
+  
+money_made1 <- money_made$LoanAmount * (0.12 - 0.02)
+
+opportunity_cost <- sum(money_made1)
+opportunity_cost
+```
+
